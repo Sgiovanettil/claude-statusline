@@ -1,0 +1,16 @@
+# Secretos y entorno
+.env
+.env.*
+!.env.example
+
+# Artefactos de graphify
+graphify-out/
+
+# Respaldos y temporales
+*.bak
+*.bak.*
+*~
+
+# Basura de SO
+.DS_Store
+Thumbs.db
