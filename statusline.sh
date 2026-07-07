@@ -377,6 +377,48 @@ render_extra_usage() {
     fi
 }
 
+# Render per-model weekly limits (e.g. Fable/Opus/Sonnet) from API usage data.
+# These live in the .limits[] array, only present in the OAuth usage response —
+# not in the stdin rate_limits. Only active limits are shown, so the line stays
+# quiet unless a model-scoped cap is actually in effect. Color follows severity.
+render_scoped_limits() {
+    local data="$1"
+    [ -z "$data" ] && return
+    local lines
+    lines=$(echo "$data" | jq -r '
+        .limits[]?
+        | select(.is_active == true and .scope.model.display_name != null)
+        | "\(.scope.model.display_name)\t\(.percent)\t\(.severity)\t\(.resets_at // "")"
+    ' 2>/dev/null)
+    [ -z "$lines" ] && return
+    local name pct sev rat pctint color reltxt epoch now diff
+    while IFS=$'\t' read -r name pct sev rat; do
+        [ -z "$name" ] && continue
+        pctint=$(printf '%.0f' "$pct" 2>/dev/null)
+        case "$sev" in
+            critical) color="$red" ;;
+            warning)  color="$yellow" ;;
+            high)     color="$orange" ;;
+            *)        color=$(usage_color "$pctint") ;;
+        esac
+        # Compact relative reset (e.g. ·2d / ·5h / ·40m)
+        reltxt=""
+        if [ -n "$rat" ] && [ "$rat" != "null" ]; then
+            epoch=$(iso_to_epoch "$rat")
+            if [ -n "$epoch" ]; then
+                now=$(date +%s); diff=$(( epoch - now ))
+                if [ "$diff" -gt 0 ]; then
+                    if   [ "$diff" -ge 86400 ]; then reltxt=" ${dim}·$(( diff / 86400 ))d${reset}"
+                    elif [ "$diff" -ge 3600 ];  then reltxt=" ${dim}·$(( diff / 3600 ))h${reset}"
+                    else                             reltxt=" ${dim}·$(( diff / 60 ))m${reset}"
+                    fi
+                fi
+            fi
+        fi
+        out+="${sep}${white}${name}${reset} ${color}${pctint}%${reset}${reltxt}"
+    done <<< "$lines"
+}
+
 if $effective_builtin; then
     # ---- Use rate_limits data provided directly by Claude Code in JSON input ----
     # resets_at values are Unix epoch integers in this source
@@ -400,6 +442,9 @@ if $effective_builtin; then
         fi
     fi
 
+    # Per-model weekly limits (Fable/Opus/Sonnet) live only in the API cache
+    render_scoped_limits "$usage_data"
+
     # Render extra_usage from API cache (stdin rate_limits doesn't expose it)
     render_extra_usage "$usage_data"
 
@@ -420,10 +465,14 @@ if $effective_builtin; then
     fi
     _extra_json=$(echo "$usage_data" | jq -c '.extra_usage // null' 2>/dev/null)
     [ -z "$_extra_json" ] && _extra_json="null"
-    printf '{"five_hour":{"utilization":%s,"resets_at":%s},"seven_day":{"utilization":%s,"resets_at":%s},"extra_usage":%s}' \
+    # Preserve per-model limits[] from the prior API response so the scoped
+    # limits (Fable/Opus/Sonnet) survive cache writes on the builtin path.
+    _limits_json=$(echo "$usage_data" | jq -c '.limits // null' 2>/dev/null)
+    [ -z "$_limits_json" ] && _limits_json="null"
+    printf '{"five_hour":{"utilization":%s,"resets_at":%s},"seven_day":{"utilization":%s,"resets_at":%s},"extra_usage":%s,"limits":%s}' \
         "${builtin_five_hour_pct:-0}" "$_fh_reset_json" \
         "${builtin_seven_day_pct:-0}" "$_sd_reset_json" \
-        "$_extra_json" > "$cache_file" 2>/dev/null
+        "$_extra_json" "$_limits_json" > "$cache_file" 2>/dev/null
 elif [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>&1; then
     # ---- Fall back: API-fetched usage data ----
     # ---- 5-hour (current) ----
@@ -444,6 +493,7 @@ elif [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 
     out+="${sep}${white}7d${reset} ${seven_day_color}${seven_day_pct}%${reset}"
     [ -n "$seven_day_reset" ] && out+=" ${dim}@${seven_day_reset}${reset}"
 
+    render_scoped_limits "$usage_data"
     render_extra_usage "$usage_data"
 else
     # No valid usage data — show placeholders
