@@ -341,8 +341,8 @@ format_reset_time() {
             formatted=$(date -j -r "$epoch" +"%H:%M" 2>/dev/null)
             ;;
         datetime)
-            formatted=$(date -d "@$epoch" +"%a %b %-d, %H:%M" 2>/dev/null) || \
-            formatted=$(date -j -r "$epoch" +"%a %b %-d, %H:%M" 2>/dev/null)
+            formatted=$(date -d "@$epoch" +"%d/%m %H:%M" 2>/dev/null) || \
+            formatted=$(date -j -r "$epoch" +"%d/%m %H:%M" 2>/dev/null)
             ;;
         *)
             formatted=$(date -d "@$epoch" +"%b %-d" 2>/dev/null) || \
@@ -377,6 +377,41 @@ render_extra_usage() {
     fi
 }
 
+# Render per-model weekly limits (e.g. Fable/Opus/Sonnet) from API usage data.
+# These live in the .limits[] array, only present in the OAuth usage response —
+# not in the stdin rate_limits. Only active limits are shown, so the line stays
+# quiet unless a model-scoped cap is actually in effect. Color follows severity.
+render_scoped_limits() {
+    local data="$1"
+    [ -z "$data" ] && return
+    local lines
+    lines=$(echo "$data" | jq -r '
+        .limits[]?
+        | select(.is_active == true and .scope.model.display_name != null)
+        | "\(.scope.model.display_name)\t\(.percent)\t\(.severity)\t\(.resets_at // "")"
+    ' 2>/dev/null)
+    [ -z "$lines" ] && return
+    local name pct sev rat pctint color reltxt epoch now diff
+    while IFS=$'\t' read -r name pct sev rat; do
+        [ -z "$name" ] && continue
+        pctint=$(printf '%.0f' "$pct" 2>/dev/null)
+        case "$sev" in
+            critical) color="$red" ;;
+            warning)  color="$yellow" ;;
+            high)     color="$orange" ;;
+            *)        color=$(usage_color "$pctint") ;;
+        esac
+        # Absolute reset (@DD/MM HH:MM), same convention as the 7d limit
+        reltxt=""
+        if [ -n "$rat" ] && [ "$rat" != "null" ]; then
+            local _fmt
+            _fmt=$(format_reset_time "$rat" "datetime")
+            [ -n "$_fmt" ] && reltxt=" ${dim}@${_fmt}${reset}"
+        fi
+        out+="${sep}${white}${name}${reset} ${color}${pctint}%${reset}${reltxt}"
+    done <<< "$lines"
+}
+
 if $effective_builtin; then
     # ---- Use rate_limits data provided directly by Claude Code in JSON input ----
     # resets_at values are Unix epoch integers in this source
@@ -395,10 +430,13 @@ if $effective_builtin; then
         seven_day_color=$(usage_color "$seven_day_pct")
         out+="${sep}${white}7d${reset} ${seven_day_color}${seven_day_pct}%${reset}"
         if [ -n "$builtin_seven_day_reset" ] && [ "$builtin_seven_day_reset" != "null" ]; then
-            seven_day_reset=$(date -j -r "$builtin_seven_day_reset" +"%a %b %-d, %H:%M" 2>/dev/null || date -d "@$builtin_seven_day_reset" +"%a %b %-d, %H:%M" 2>/dev/null)
+            seven_day_reset=$(date -j -r "$builtin_seven_day_reset" +"%d/%m %H:%M" 2>/dev/null || date -d "@$builtin_seven_day_reset" +"%d/%m %H:%M" 2>/dev/null)
             [ -n "$seven_day_reset" ] && out+=" ${dim}@${seven_day_reset}${reset}"
         fi
     fi
+
+    # Per-model weekly limits (Fable/Opus/Sonnet) live only in the API cache
+    render_scoped_limits "$usage_data"
 
     # Render extra_usage from API cache (stdin rate_limits doesn't expose it)
     render_extra_usage "$usage_data"
@@ -420,10 +458,14 @@ if $effective_builtin; then
     fi
     _extra_json=$(echo "$usage_data" | jq -c '.extra_usage // null' 2>/dev/null)
     [ -z "$_extra_json" ] && _extra_json="null"
-    printf '{"five_hour":{"utilization":%s,"resets_at":%s},"seven_day":{"utilization":%s,"resets_at":%s},"extra_usage":%s}' \
+    # Preserve per-model limits[] from the prior API response so the scoped
+    # limits (Fable/Opus/Sonnet) survive cache writes on the builtin path.
+    _limits_json=$(echo "$usage_data" | jq -c '.limits // null' 2>/dev/null)
+    [ -z "$_limits_json" ] && _limits_json="null"
+    printf '{"five_hour":{"utilization":%s,"resets_at":%s},"seven_day":{"utilization":%s,"resets_at":%s},"extra_usage":%s,"limits":%s}' \
         "${builtin_five_hour_pct:-0}" "$_fh_reset_json" \
         "${builtin_seven_day_pct:-0}" "$_sd_reset_json" \
-        "$_extra_json" > "$cache_file" 2>/dev/null
+        "$_extra_json" "$_limits_json" > "$cache_file" 2>/dev/null
 elif [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 2>&1; then
     # ---- Fall back: API-fetched usage data ----
     # ---- 5-hour (current) ----
@@ -444,45 +486,13 @@ elif [ -n "$usage_data" ] && echo "$usage_data" | jq -e '.five_hour' >/dev/null 
     out+="${sep}${white}7d${reset} ${seven_day_color}${seven_day_pct}%${reset}"
     [ -n "$seven_day_reset" ] && out+=" ${dim}@${seven_day_reset}${reset}"
 
+    render_scoped_limits "$usage_data"
     render_extra_usage "$usage_data"
 else
     # No valid usage data — show placeholders
     out+="${sep}${white}5h${reset} ${dim}-${reset}"
     out+="${sep}${white}7d${reset} ${dim}-${reset}"
 fi
-
-# ===== Claude Code Peak / Off-peak indicator =====
-# Official Claude Code peak window:
-#   Weekdays 05:00-11:00 Pacific Time.
-# Everything else is OFF-PEAK.
-#
-# Uses America/Los_Angeles so DST is handled by the OS timezone database.
-
-pt_day=$(TZ=America/Los_Angeles date +%u 2>/dev/null)   # 1=Mon ... 7=Sun
-pt_hour=$(TZ=America/Los_Angeles date +%H 2>/dev/null)
-pt_min=$(TZ=America/Los_Angeles date +%M 2>/dev/null)
-
-is_peak=false
-
-if [ -n "$pt_day" ] && [ -n "$pt_hour" ] && [ -n "$pt_min" ]; then
-    pt_total_min=$((10#$pt_hour * 60 + 10#$pt_min))
-
-    peak_start_min=$((5 * 60))   # 05:00 PT
-    peak_end_min=$((11 * 60))    # 11:00 PT
-
-    if [ "$pt_day" -ge 1 ] && [ "$pt_day" -le 5 ] && \
-       [ "$pt_total_min" -ge "$peak_start_min" ] && \
-       [ "$pt_total_min" -lt "$peak_end_min" ]; then
-        is_peak=true
-    fi
-fi
-
-if $is_peak; then
-    out+=" ${dim}|${reset} ${red}PEAK${reset}"
-else
-    out+=" ${dim}|${reset} ${green}OFF-PEAK${reset}"
-fi
-# ===== End Claude Code Peak / Off-peak indicator =====
 
 # Append CLI version as last segment
 if [ -n "$cli_version" ]; then
