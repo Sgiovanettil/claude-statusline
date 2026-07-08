@@ -494,39 +494,6 @@ else
     out+="${sep}${white}7d${reset} ${dim}-${reset}"
 fi
 
-# ===== Claude Code Peak / Off-peak indicator =====
-# Official Claude Code peak window:
-#   Weekdays 05:00-11:00 Pacific Time.
-# Everything else is OFF-PEAK.
-#
-# Uses America/Los_Angeles so DST is handled by the OS timezone database.
-
-pt_day=$(TZ=America/Los_Angeles date +%u 2>/dev/null)   # 1=Mon ... 7=Sun
-pt_hour=$(TZ=America/Los_Angeles date +%H 2>/dev/null)
-pt_min=$(TZ=America/Los_Angeles date +%M 2>/dev/null)
-
-is_peak=false
-
-if [ -n "$pt_day" ] && [ -n "$pt_hour" ] && [ -n "$pt_min" ]; then
-    pt_total_min=$((10#$pt_hour * 60 + 10#$pt_min))
-
-    peak_start_min=$((5 * 60))   # 05:00 PT
-    peak_end_min=$((11 * 60))    # 11:00 PT
-
-    if [ "$pt_day" -ge 1 ] && [ "$pt_day" -le 5 ] && \
-       [ "$pt_total_min" -ge "$peak_start_min" ] && \
-       [ "$pt_total_min" -lt "$peak_end_min" ]; then
-        is_peak=true
-    fi
-fi
-
-if $is_peak; then
-    out+=" ${dim}|${reset} ${red}PEAK${reset}"
-else
-    out+=" ${dim}|${reset} ${green}OFF-PEAK${reset}"
-fi
-# ===== End Claude Code Peak / Off-peak indicator =====
-
 # Append CLI version as last segment
 if [ -n "$cli_version" ]; then
     out+=" ${dim}|${reset} ${orange}v${cli_version}${reset}"
