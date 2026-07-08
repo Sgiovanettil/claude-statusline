@@ -1,4 +1,5 @@
-# Single line: Model | tokens | %used | %remain | think | 5h bar @reset | 7d bar @reset | extra
+# statusline v1.0.0 — línea única para la statusLine de Claude Code
+# Segmentos: modelo | dir@rama (+/-) | tokens (%) | effort | 5h @reset | 7d @reset | modelos | extra | vCLI
 
 # Read input from stdin
 $input = @($Input) -join "`n"
@@ -299,8 +300,8 @@ function Format-ResetTime([string]$isoStr, [string]$style) {
     try {
         $dt = [DateTimeOffset]::Parse($isoStr).LocalDateTime
         switch ($style) {
-            "time"     { return $dt.ToString("h:mmtt").ToLower() }
-            "datetime" { return $dt.ToString("ddd MMM d, h:mmtt").ToLower() }
+            "time"     { return $dt.ToString("HH:mm") }
+            "datetime" { return $dt.ToString("dd/MM HH:mm") }
             default    { return $dt.ToString("MMM d").ToLower() }
         }
     } catch { return $null }
@@ -312,8 +313,8 @@ function Format-EpochResetTime([object]$epoch, [string]$style) {
     try {
         $dt = [DateTimeOffset]::FromUnixTimeSeconds([long]$epoch).LocalDateTime
         switch ($style) {
-            "time"     { return $dt.ToString("h:mmtt").ToLower() }
-            "datetime" { return $dt.ToString("ddd MMM d, h:mmtt").ToLower() }
+            "time"     { return $dt.ToString("HH:mm") }
+            "datetime" { return $dt.ToString("dd/MM HH:mm") }
             default    { return $dt.ToString("MMM d").ToLower() }
         }
     } catch { return $null }
@@ -346,6 +347,40 @@ function Format-ExtraUsage($usage) {
     }
 }
 
+# Render per-model weekly limits (e.g. Fable/Opus/Sonnet) from API usage data.
+# These live in the .limits[] array, only present in the OAuth usage response —
+# not in the stdin rate_limits. Only active limits are shown, so the line stays
+# quiet unless a model-scoped cap is actually in effect. Color follows severity.
+function Format-ScopedLimits($usage) {
+    if (-not $usage) { return "" }
+    $result = ""
+    try {
+        $limits = $usage.limits
+        if (-not $limits) { return "" }
+        foreach ($lim in $limits) {
+            if ($lim.is_active -ne $true) { continue }
+            $name = $lim.scope.model.display_name
+            if (-not $name) { continue }
+            $pctint = [math]::Floor([double](Coalesce $lim.percent 0))
+            switch ($lim.severity) {
+                "critical" { $color = $red }
+                "warning"  { $color = $yellow }
+                "high"     { $color = $orange }
+                default    { $color = Get-UsageColor $pctint }
+            }
+            # Absolute reset (@DD/MM HH:MM), same convention as the 7d limit
+            $reltxt = ""
+            $rat = $lim.resets_at
+            if ($rat -and "$rat" -ne "null") {
+                $fmt = Format-ResetTime $rat "datetime"
+                if ($fmt) { $reltxt = " ${dim}@${fmt}${reset}" }
+            }
+            $result += "${sep}${white}${name}${reset} ${color}${pctint}%${reset}${reltxt}"
+        }
+    } catch {}
+    return $result
+}
+
 # Parse usage_data once (used by both branches below for extra_usage)
 $parsedUsage = $null
 if ($usageData) {
@@ -372,6 +407,9 @@ if ($effectiveBuiltin) {
         $sevenDayReset = Format-EpochResetTime $builtinSevenDayReset "datetime"
         if ($sevenDayReset) { $out += " ${dim}@${sevenDayReset}${reset}" }
     }
+
+    # Per-model weekly limits (Fable/Opus/Sonnet) live only in the API cache
+    $out += Format-ScopedLimits $parsedUsage
 
     # Render extra_usage from API cache (stdin rate_limits doesn't expose it)
     $out += Format-ExtraUsage $parsedUsage
@@ -401,7 +439,15 @@ if ($effectiveBuiltin) {
             $extraJson = $parsedUsage.extra_usage | ConvertTo-Json -Depth 5 -Compress
         } catch {}
     }
-    $fallbackJson = "{`"five_hour`":{`"utilization`":$fhVal,`"resets_at`":$fhResetJson},`"seven_day`":{`"utilization`":$sdVal,`"resets_at`":$sdResetJson},`"extra_usage`":$extraJson}"
+    # Preserve per-model limits[] from the prior API response so the scoped
+    # limits (Fable/Opus/Sonnet) survive cache writes on the builtin path.
+    $limitsJson = "null"
+    if ($parsedUsage -and $parsedUsage.limits) {
+        try {
+            $limitsJson = $parsedUsage.limits | ConvertTo-Json -Depth 10 -Compress
+        } catch {}
+    }
+    $fallbackJson = "{`"five_hour`":{`"utilization`":$fhVal,`"resets_at`":$fhResetJson},`"seven_day`":{`"utilization`":$sdVal,`"resets_at`":$sdResetJson},`"extra_usage`":$extraJson,`"limits`":$limitsJson}"
     $fallbackJson | Set-Content $cacheFile -Force
 } elseif ($parsedUsage) {
     # ---- Fall back: API-fetched usage data ----
@@ -424,6 +470,7 @@ if ($effectiveBuiltin) {
         $out += "${sep}${white}7d${reset} ${sevenDayColor}${sevenDayPct}%${reset}"
         if ($sevenDayReset) { $out += " ${dim}@${sevenDayReset}${reset}" }
 
+        $out += Format-ScopedLimits $parsedUsage
         $out += Format-ExtraUsage $parsedUsage
     } catch {}
 }
