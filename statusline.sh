@@ -1,5 +1,5 @@
 #!/bin/bash
-# statusline v1.0.0 — línea única para la statusLine de Claude Code
+# statusline v1.0.1 — línea única para la statusLine de Claude Code
 # Segmentos: modelo | dir@rama (+/-) | tokens (%) | effort | 5h @reset | 7d @reset | modelos | extra | vCLI
 
 set -f  # disable globbing
@@ -380,15 +380,16 @@ render_extra_usage() {
 
 # Render per-model weekly limits (e.g. Fable/Opus/Sonnet) from API usage data.
 # These live in the .limits[] array, only present in the OAuth usage response —
-# not in the stdin rate_limits. Only active limits are shown, so the line stays
-# quiet unless a model-scoped cap is actually in effect. Color follows severity.
+# not in the stdin rate_limits. Shown whenever a model-scoped cap exists,
+# regardless of is_active (that flag marks the currently-binding constraint,
+# not whether the model has a cap at all). Color follows severity.
 render_scoped_limits() {
     local data="$1"
     [ -z "$data" ] && return
     local lines
     lines=$(echo "$data" | jq -r '
         .limits[]?
-        | select(.is_active == true and .scope.model.display_name != null)
+        | select(.scope.model.display_name != null)
         | "\(.scope.model.display_name)\t\(.percent)\t\(.severity)\t\(.resets_at // "")"
     ' 2>/dev/null)
     [ -z "$lines" ] && return
