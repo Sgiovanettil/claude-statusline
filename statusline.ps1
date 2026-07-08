@@ -1,4 +1,4 @@
-# statusline v1.0.0 — línea única para la statusLine de Claude Code
+# statusline v1.0.1 — línea única para la statusLine de Claude Code
 # Segmentos: modelo | dir@rama (+/-) | tokens (%) | effort | 5h @reset | 7d @reset | modelos | extra | vCLI
 
 # Read input from stdin
@@ -349,8 +349,9 @@ function Format-ExtraUsage($usage) {
 
 # Render per-model weekly limits (e.g. Fable/Opus/Sonnet) from API usage data.
 # These live in the .limits[] array, only present in the OAuth usage response —
-# not in the stdin rate_limits. Only active limits are shown, so the line stays
-# quiet unless a model-scoped cap is actually in effect. Color follows severity.
+# not in the stdin rate_limits. Shown whenever a model-scoped cap exists,
+# regardless of is_active (that flag marks the currently-binding constraint,
+# not whether the model has a cap at all). Color follows severity.
 function Format-ScopedLimits($usage) {
     if (-not $usage) { return "" }
     $result = ""
@@ -358,7 +359,6 @@ function Format-ScopedLimits($usage) {
         $limits = $usage.limits
         if (-not $limits) { return "" }
         foreach ($lim in $limits) {
-            if ($lim.is_active -ne $true) { continue }
             $name = $lim.scope.model.display_name
             if (-not $name) { continue }
             $pctint = [math]::Floor([double](Coalesce $lim.percent 0))

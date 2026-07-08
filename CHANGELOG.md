@@ -5,6 +5,12 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato se basa en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [1.0.1] - 2026-07-08
+
+### Fixed
+
+- Límites semanales por modelo (Fable/Opus/Sonnet): ya no dependen de `is_active` para mostrarse. Ese campo marca cuál límite es el vinculante en un momento dado (p. ej. sesión o semanal general), no si el modelo tiene un cupo asignado, por lo que un límite por modelo con uso bajo podía quedar oculto aunque existiera. Ahora se muestra siempre que el límite tenga `scope.model` presente en la respuesta de uso OAuth.
+
 ## [1.0.0] - 2026-07-08
 
 ### Added
@@ -19,4 +25,5 @@ y este proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - Caché de uso compartida entre instancias con throttling (60 s) y lock anti-estampida.
 - `README.md` con instalación, segmentos y requisitos.
 
+[1.0.1]: https://github.com/Sgiovanettil/claude-statusline/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Sgiovanettil/claude-statusline/releases/tag/v1.0.0
