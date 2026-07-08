@@ -1,4 +1,5 @@
-# Single line: Model | tokens | %used | %remain | think | 5h bar @reset | 7d bar @reset | extra
+# statusline v1.0.0 — línea única para la statusLine de Claude Code
+# Segmentos: modelo | dir@rama (+/-) | tokens (%) | effort | 5h @reset | 7d @reset | modelos | extra | vCLI
 
 # Read input from stdin
 $input = @($Input) -join "`n"
