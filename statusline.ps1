@@ -299,8 +299,8 @@ function Format-ResetTime([string]$isoStr, [string]$style) {
     try {
         $dt = [DateTimeOffset]::Parse($isoStr).LocalDateTime
         switch ($style) {
-            "time"     { return $dt.ToString("h:mmtt").ToLower() }
-            "datetime" { return $dt.ToString("ddd MMM d, h:mmtt").ToLower() }
+            "time"     { return $dt.ToString("HH:mm") }
+            "datetime" { return $dt.ToString("dd/MM HH:mm") }
             default    { return $dt.ToString("MMM d").ToLower() }
         }
     } catch { return $null }
@@ -312,8 +312,8 @@ function Format-EpochResetTime([object]$epoch, [string]$style) {
     try {
         $dt = [DateTimeOffset]::FromUnixTimeSeconds([long]$epoch).LocalDateTime
         switch ($style) {
-            "time"     { return $dt.ToString("h:mmtt").ToLower() }
-            "datetime" { return $dt.ToString("ddd MMM d, h:mmtt").ToLower() }
+            "time"     { return $dt.ToString("HH:mm") }
+            "datetime" { return $dt.ToString("dd/MM HH:mm") }
             default    { return $dt.ToString("MMM d").ToLower() }
         }
     } catch { return $null }

@@ -341,8 +341,8 @@ format_reset_time() {
             formatted=$(date -j -r "$epoch" +"%H:%M" 2>/dev/null)
             ;;
         datetime)
-            formatted=$(date -d "@$epoch" +"%a %b %-d, %H:%M" 2>/dev/null) || \
-            formatted=$(date -j -r "$epoch" +"%a %b %-d, %H:%M" 2>/dev/null)
+            formatted=$(date -d "@$epoch" +"%d/%m %H:%M" 2>/dev/null) || \
+            formatted=$(date -j -r "$epoch" +"%d/%m %H:%M" 2>/dev/null)
             ;;
         *)
             formatted=$(date -d "@$epoch" +"%b %-d" 2>/dev/null) || \
@@ -401,19 +401,12 @@ render_scoped_limits() {
             high)     color="$orange" ;;
             *)        color=$(usage_color "$pctint") ;;
         esac
-        # Compact relative reset (e.g. ·2d / ·5h / ·40m)
+        # Absolute reset (@DD/MM HH:MM), same convention as the 7d limit
         reltxt=""
         if [ -n "$rat" ] && [ "$rat" != "null" ]; then
-            epoch=$(iso_to_epoch "$rat")
-            if [ -n "$epoch" ]; then
-                now=$(date +%s); diff=$(( epoch - now ))
-                if [ "$diff" -gt 0 ]; then
-                    if   [ "$diff" -ge 86400 ]; then reltxt=" ${dim}·$(( diff / 86400 ))d${reset}"
-                    elif [ "$diff" -ge 3600 ];  then reltxt=" ${dim}·$(( diff / 3600 ))h${reset}"
-                    else                             reltxt=" ${dim}·$(( diff / 60 ))m${reset}"
-                    fi
-                fi
-            fi
+            local _fmt
+            _fmt=$(format_reset_time "$rat" "datetime")
+            [ -n "$_fmt" ] && reltxt=" ${dim}@${_fmt}${reset}"
         fi
         out+="${sep}${white}${name}${reset} ${color}${pctint}%${reset}${reltxt}"
     done <<< "$lines"
@@ -437,7 +430,7 @@ if $effective_builtin; then
         seven_day_color=$(usage_color "$seven_day_pct")
         out+="${sep}${white}7d${reset} ${seven_day_color}${seven_day_pct}%${reset}"
         if [ -n "$builtin_seven_day_reset" ] && [ "$builtin_seven_day_reset" != "null" ]; then
-            seven_day_reset=$(date -j -r "$builtin_seven_day_reset" +"%a %b %-d, %H:%M" 2>/dev/null || date -d "@$builtin_seven_day_reset" +"%a %b %-d, %H:%M" 2>/dev/null)
+            seven_day_reset=$(date -j -r "$builtin_seven_day_reset" +"%d/%m %H:%M" 2>/dev/null || date -d "@$builtin_seven_day_reset" +"%d/%m %H:%M" 2>/dev/null)
             [ -n "$seven_day_reset" ] && out+=" ${dim}@${seven_day_reset}${reset}"
         fi
     fi
